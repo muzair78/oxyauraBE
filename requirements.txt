@@ -1,0 +1,29 @@
+# Web framework & server
+fastapi
+uvicorn[standard]
+
+# Database
+sqlalchemy[asyncio]
+asyncpg
+psycopg2-binary
+alembic
+
+# Validation & settings
+pydantic
+pydantic-settings
+email-validator
+
+# Environment
+python-dotenv
+
+# Authentication / Security
+pwdlib[argon2]
+python-jose[cryptography]
+passlib[bcrypt]
+python-multipart
+
+# File uploads
+aiofiles
+
+# Cloudinary
+cloudinary
