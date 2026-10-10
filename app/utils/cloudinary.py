@@ -1,18 +1,17 @@
 import os
+import uuid
 
-import cloudinary
-import cloudinary.uploader
+from azure.storage.blob import BlobServiceClient, ContentSettings
 from dotenv import load_dotenv
 from fastapi import HTTPException, status
 
 load_dotenv()
 
-cloudinary.config(
-    cloud_name=os.getenv("CLOUDINARY_CLOUD_NAME"),
-    api_key=os.getenv("CLOUDINARY_API_KEY"),
-    api_secret=os.getenv("CLOUDINARY_API_SECRET"),
-    secure=True,
-)
+_connection_string = os.getenv("AZURE_STORAGE_CONNECTION_STRING")
+_container_name = os.getenv("AZURE_STORAGE_CONTAINER", "doctor-reports")
+
+blob_service_client = BlobServiceClient.from_connection_string(_connection_string)
+container_client = blob_service_client.get_container_client(_container_name)
 
 ALLOWED_MIME_TYPES = {
     "application/pdf",
@@ -28,16 +27,19 @@ MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024  # 10 MB
 
 def upload_document(file_bytes: bytes, filename: str, content_type: str) -> str:
     """
-    Upload a document to Cloudinary and return the secure URL.
+    Upload a document to Azure Blob Storage and return the public URL.
 
     Args:
         file_bytes: Raw file content
-        filename: Original filename (used as public_id)
+        filename: Original filename
         content_type: MIME type of the file
 
     Returns:
-        Secure URL of the uploaded file
+        URL of the uploaded blob
     """
+    print(f"[Azure Upload] Starting upload: filename={filename}, content_type={content_type}, size={len(file_bytes)} bytes")
+    print(f"[Azure Upload] Container: {_container_name}")
+
     if content_type not in ALLOWED_MIME_TYPES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -50,21 +52,23 @@ def upload_document(file_bytes: bytes, filename: str, content_type: str) -> str:
             detail="File size exceeds the 10 MB limit.",
         )
 
-    # Strip extension for public_id; Cloudinary appends its own
-    public_id = os.path.splitext(filename)[0]
+    # Use a UUID prefix to avoid name collisions
+    name, ext = os.path.splitext(filename)
+    blob_name = f"{name}_{uuid.uuid4().hex}{ext}"
+    print(f"[Azure Upload] Blob name: {blob_name}")
 
     try:
-        result = cloudinary.uploader.upload(
+        blob_client = container_client.get_blob_client(blob_name)
+        blob_client.upload_blob(
             file_bytes,
-            public_id=public_id,
-            folder="doctor/reports",
-            resource_type="auto",
             overwrite=False,
-            unique_filename=True,
+            content_settings=ContentSettings(content_type=content_type),
         )
-        return result["secure_url"]
+        print(f"[Azure Upload] Success: {blob_client.url}")
+        return blob_client.url
     except Exception as e:
+        print(f"[Azure Upload Error] {type(e).__name__}: {e}")
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Cloudinary upload failed: {str(e)}",
+            detail=f"Azure Blob Storage upload failed: {str(e)}",
         )
