@@ -34,7 +34,8 @@ async def upload_report(
     # Validate userId is a proper UUID
     try:
         user_uuid = uuid.UUID(userId)
-    except ValueError:
+    except ValueError as e:
+        print(f"[Upload Error] Invalid userId: {e}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid userId. Must be a valid UUID.",
@@ -68,9 +69,10 @@ async def upload_report(
             content_type=file.content_type,
             filename=file.filename,
         )
-    except ValueError:
+    except ValueError as e:
         # Unsupported file type for text extraction — skip vectorization
         raw_text = ""
+        print(f"[Upload Error] Text extraction failed: {e}")
 
     # 5. Split → embed → store chunks if text was extracted
     if raw_text.strip():

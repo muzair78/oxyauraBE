@@ -37,9 +37,6 @@ def upload_document(file_bytes: bytes, filename: str, content_type: str) -> str:
     Returns:
         URL of the uploaded blob
     """
-    print(f"[Azure Upload] Starting upload: filename={filename}, content_type={content_type}, size={len(file_bytes)} bytes")
-    print(f"[Azure Upload] Container: {_container_name}")
-
     if content_type not in ALLOWED_MIME_TYPES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -55,7 +52,6 @@ def upload_document(file_bytes: bytes, filename: str, content_type: str) -> str:
     # Use a UUID prefix to avoid name collisions
     name, ext = os.path.splitext(filename)
     blob_name = f"{name}_{uuid.uuid4().hex}{ext}"
-    print(f"[Azure Upload] Blob name: {blob_name}")
 
     try:
         blob_client = container_client.get_blob_client(blob_name)
@@ -64,7 +60,6 @@ def upload_document(file_bytes: bytes, filename: str, content_type: str) -> str:
             overwrite=False,
             content_settings=ContentSettings(content_type=content_type),
         )
-        print(f"[Azure Upload] Success: {blob_client.url}")
         return blob_client.url
     except Exception as e:
         print(f"[Azure Upload Error] {type(e).__name__}: {e}")

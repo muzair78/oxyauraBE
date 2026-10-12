@@ -18,14 +18,14 @@ email-validator==2.3.0
 python-dotenv==1.2.3
 
 # Authentication / Security
-pwdlib==0.3.1
+pwdlib[argon2]==0.3.1
 python-jose==3.5.0
 passlib==1.7.4
 bcrypt==5.0.0
 python-multipart==0.0.32
 
-# Cloudinary
-cloudinary==1.46.2
+# Azure Blob Storage
+azure-storage-blob
 
 # PDF & DOCX text extraction
 pdfplumber==0.11.10
@@ -37,6 +37,9 @@ requests==2.34.2
 # HuggingFace
 huggingface_hub==1.31.0
 
+# FastEmbed
+fastembed
+
 # LangChain
 langchain==1.4.0
 langchain-core==1.6.3
@@ -45,3 +48,6 @@ langchain-text-splitters==1.1.2
 
 # Groq LLM
 groq==0.37.1
+
+# Azure Blob Storage
+azure-storage-blob
