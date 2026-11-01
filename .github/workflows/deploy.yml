@@ -1,5 +1,4 @@
-
-name: Oxyaura Server CI/CD
+name: Oxyaura Server CI/CD (Oracle Cloud)
 
 on:
   push:
@@ -15,11 +14,11 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. Get project code from GitHub
+      # 1. Checkout project
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # 2. Enable Docker image building
+      # 2. Setup Docker Buildx
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -30,7 +29,7 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # 4. Build image and push to Docker Hub
+      # 4. Build and push Docker image
       - name: Build and push image
         uses: docker/build-push-action@v6
         with:
@@ -40,24 +39,26 @@ jobs:
             ${{ secrets.DOCKERHUB_USERNAME }}/oxyaura-backend:latest
             ${{ secrets.DOCKERHUB_USERNAME }}/oxyaura-backend:${{ github.sha }}
 
-      # 5. Configure SSH for Azure VM
+      # 5. Configure SSH for Oracle Cloud VM
       - name: Configure SSH
         env:
-          SSH_PRIVATE_KEY: ${{ secrets.AZURE_VM_SSH_KEY }}
-          VM_HOST: ${{ secrets.AZURE_VM_HOST }}
+          SSH_PRIVATE_KEY: ${{ secrets.ORACLE_VM_SSH_KEY }}
+          VM_HOST: ${{ secrets.ORACLE_VM_HOST }}
         run: |
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
+
           printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
+
           ssh-keygen -y -f ~/.ssh/deploy_key >/dev/null
           ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
 
-      # 6. Pull image and replace the running container
-      - name: Deploy to Azure VM
+      # 6. Deploy to Oracle Cloud VM
+      - name: Deploy to Oracle VM
         env:
-          VM_HOST: ${{ secrets.AZURE_VM_HOST }}
-          VM_USER: ${{ secrets.AZURE_VM_USER }}
+          VM_HOST: ${{ secrets.ORACLE_VM_HOST }}
+          VM_USER: ${{ secrets.ORACLE_VM_USER }}
           DOCKER_USER: ${{ secrets.DOCKERHUB_USERNAME }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
@@ -75,11 +76,11 @@ jobs:
                -p 8000:8000 \
                $IMAGE"
 
-      # 7. Verify that the container is running
+      # 7. Verify deployment
       - name: Verify deployment
         env:
-          VM_HOST: ${{ secrets.AZURE_VM_HOST }}
-          VM_USER: ${{ secrets.AZURE_VM_USER }}
+          VM_HOST: ${{ secrets.ORACLE_VM_HOST }}
+          VM_USER: ${{ secrets.ORACLE_VM_USER }}
         run: |
           ssh -i ~/.ssh/deploy_key \
             "$VM_USER@$VM_HOST" \
