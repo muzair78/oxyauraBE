@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. Checkout project
+      # 1. Checkout code
       - name: Checkout code
         uses: actions/checkout@v4
 
@@ -39,20 +39,30 @@ jobs:
             ${{ secrets.DOCKERHUB_USERNAME }}/oxyaura-backend:latest
             ${{ secrets.DOCKERHUB_USERNAME }}/oxyaura-backend:${{ github.sha }}
 
-      # 5. Configure SSH for Oracle Cloud VM
+      # 5. Configure and validate SSH
       - name: Configure SSH
         env:
-          SSH_PRIVATE_KEY: ${{ secrets.ORACLE_VM_SSH_KEY }}
+          SSH_PRIVATE_KEY_B64: ${{ secrets.ORACLE_VM_SSH_KEY_B64 }}
           VM_HOST: ${{ secrets.ORACLE_VM_HOST }}
         run: |
+          set -e
+
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
 
-          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
+          # Decode Base64 private key
+          printf '%s' "$SSH_PRIVATE_KEY_B64" | base64 --decode > ~/.ssh/deploy_key
+
           chmod 600 ~/.ssh/deploy_key
 
-          ssh-keygen -y -f ~/.ssh/deploy_key >/dev/null
+          # Validate private key
+          ssh-keygen -y -f ~/.ssh/deploy_key > /dev/null
+
+          echo "SSH private key validated successfully"
+
+          # Add Oracle VM host
           ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
 
       # 6. Deploy to Oracle Cloud VM
       - name: Deploy to Oracle VM
@@ -62,9 +72,12 @@ jobs:
           DOCKER_USER: ${{ secrets.DOCKERHUB_USERNAME }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
+          set -e
+
           IMAGE="$DOCKER_USER/oxyaura-backend:$IMAGE_TAG"
 
           ssh -i ~/.ssh/deploy_key \
+            -o StrictHostKeyChecking=yes \
             "$VM_USER@$VM_HOST" \
             "sudo docker pull $IMAGE &&
              (sudo docker stop oxyaura-api || true) &&
@@ -79,10 +92,14 @@ jobs:
       # 7. Verify deployment
       - name: Verify deployment
         env:
-          SSH_PRIVATE_KEY_B64: ${{ secrets.ORACLE_VM_SSH_KEY_B64 }}
           VM_HOST: ${{ secrets.ORACLE_VM_HOST }}
           VM_USER: ${{ secrets.ORACLE_VM_USER }}
         run: |
+          set -e
+
           ssh -i ~/.ssh/deploy_key \
+            -o StrictHostKeyChecking=yes \
             "$VM_USER@$VM_HOST" \
-            "sudo docker ps --filter name=oxyaura-api"
+            "sudo docker ps --filter name=oxyaura-api --filter status=running"
+
+          echo "Deployment completed successfully"
