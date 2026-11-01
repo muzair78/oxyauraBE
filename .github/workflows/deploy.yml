@@ -79,6 +79,7 @@ jobs:
       # 7. Verify deployment
       - name: Verify deployment
         env:
+          SSH_PRIVATE_KEY_B64: ${{ secrets.ORACLE_VM_SSH_KEY_B64 }}
           VM_HOST: ${{ secrets.ORACLE_VM_HOST }}
           VM_USER: ${{ secrets.ORACLE_VM_USER }}
         run: |
