@@ -41,6 +41,50 @@ jobs:
 
       # 5. Configure and validate SSH
       - name: Configure SSH
+        
+name: Oxyaura Server CI/CD (Oracle Cloud)
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Checkout source code
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 2. Setup Docker Buildx
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # 3. Login to Docker Hub
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # 4. Build and push Docker image
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/oxyaura-backend:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/oxyaura-backend:${{ github.sha }}
+
+      # 5. Configure SSH
+      - name: Configure Oracle SSH
         env:
           SSH_PRIVATE_KEY_B64: ${{ secrets.ORACLE_VM_SSH_KEY_B64 }}
           VM_HOST: ${{ secrets.ORACLE_VM_HOST }}
@@ -50,19 +94,85 @@ jobs:
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
 
-          # Decode Base64 private key
-          printf '%s' "$SSH_PRIVATE_KEY_B64" | base64 --decode > ~/.ssh/deploy_key
+          # Decode private SSH key
+          printf '%s' "$SSH_PRIVATE_KEY_B64" \
+            | base64 --decode > ~/.ssh/oracle_key
 
-          chmod 600 ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/oracle_key
 
           # Validate private key
-          ssh-keygen -y -f ~/.ssh/deploy_key > /dev/null
+          ssh-keygen -y -f ~/.ssh/oracle_key > /dev/null
 
-          echo "SSH private key validated successfully"
-
-          # Add Oracle VM host
+          # Add server host key
           ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
+
+          echo "Oracle SSH configured successfully"
+
+      # 6. Test SSH connection
+      - name: Test Oracle SSH
+        env:
+          VM_HOST: ${{ secrets.ORACLE_VM_HOST }}
+          VM_USER: ${{ secrets.ORACLE_VM_USER }}
+        run: |
+          set -e
+
+          ssh -i ~/.ssh/oracle_key \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            -o ConnectTimeout=15 \
+            "$VM_USER@$VM_HOST" \
+            "whoami && hostname && sudo docker --version"
+
+      # 7. Deploy to Oracle Cloud
+      - name: Deploy Oxyaura Backend
+        env:
+          VM_HOST: ${{ secrets.ORACLE_VM_HOST }}
+          VM_USER: ${{ secrets.ORACLE_VM_USER }}
+          DOCKER_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          set -e
+
+          IMAGE="$DOCKER_USER/oxyaura-backend:$IMAGE_TAG"
+
+          ssh -i ~/.ssh/oracle_key \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            "$VM_USER@$VM_HOST" \
+            "sudo docker pull '$IMAGE' &&
+             (sudo docker stop oxyaura-api || true) &&
+             (sudo docker rm oxyaura-api || true) &&
+             sudo docker run -d \
+               --name oxyaura-api \
+               --restart unless-stopped \
+               --env-file /opt/oxyaura/.env \
+               -p 127.0.0.1:8000:8000 \
+               '$IMAGE'"
+
+      # 8. Verify deployment
+      - name: Verify deployment
+        env:
+          VM_HOST: ${{ secrets.ORACLE_VM_HOST }}
+          VM_USER: ${{ secrets.ORACLE_VM_USER }}
+        run: |
+          set -e
+
+          echo "Checking Oxyaura container..."
+
+          ssh -i ~/.ssh/oracle_key \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            "$VM_USER@$VM_HOST" \
+            "sudo docker ps --filter name=oxyaura-api --filter status=running"
+
+          echo "Checking FastAPI health..."
+
+          ssh -i ~/.ssh/oracle_key \
+            "$VM_USER@$VM_HOST" \
+            "curl -fsS http://127.0.0.1:8000/docs > /dev/null"
+
+          echo "Oxyaura deployment completed successfully!"
 
       # 6. Deploy to Oracle Cloud VM
       - name: Deploy to Oracle VM
