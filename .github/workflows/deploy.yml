@@ -1,4 +1,5 @@
-name: Oxyaura Server CI/CD (Oracle Cloud)
+
+name: Oxyaura AI CI/CD (Oracle Cloud)
 
 on:
   push:
@@ -11,50 +12,7 @@ permissions:
 
 jobs:
   build-and-deploy:
-    runs-on: ubuntu-latest
-
-    steps:
-      # 1. Checkout code
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      # 2. Setup Docker Buildx
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      # 3. Login to Docker Hub
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      # 4. Build and push Docker image
-      - name: Build and push image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: true
-          tags: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/oxyaura-backend:latest
-            ${{ secrets.DOCKERHUB_USERNAME }}/oxyaura-backend:${{ github.sha }}
-
-      # 5. Configure and validate SSH
-      - name: Configure SSH
-        
-name: Oxyaura Server CI/CD (Oracle Cloud)
-
-on:
-  push:
-    branches:
-      - main
-  workflow_dispatch:
-
-permissions:
-  contents: read
-
-jobs:
-  build-and-deploy:
+    name: Build and Deploy to Oracle Cloud
     runs-on: ubuntu-latest
 
     steps:
@@ -74,7 +32,7 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       # 4. Build and push Docker image
-      - name: Build and push image
+      - name: Build and push Docker image
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -83,18 +41,18 @@ jobs:
             ${{ secrets.DOCKERHUB_USERNAME }}/oxyaura-backend:latest
             ${{ secrets.DOCKERHUB_USERNAME }}/oxyaura-backend:${{ github.sha }}
 
-      # 5. Configure SSH
+      # 5. Configure Oracle Cloud SSH
       - name: Configure Oracle SSH
         env:
           SSH_PRIVATE_KEY_B64: ${{ secrets.ORACLE_VM_SSH_KEY_B64 }}
           VM_HOST: ${{ secrets.ORACLE_VM_HOST }}
         run: |
-          set -e
+          set -euo pipefail
 
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
 
-          # Decode private SSH key
+          # Decode Base64 private key
           printf '%s' "$SSH_PRIVATE_KEY_B64" \
             | base64 --decode > ~/.ssh/oracle_key
 
@@ -103,28 +61,28 @@ jobs:
           # Validate private key
           ssh-keygen -y -f ~/.ssh/oracle_key > /dev/null
 
-          # Add server host key
+          # Add Oracle VM host
           ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
 
           echo "Oracle SSH configured successfully"
 
       # 6. Test SSH connection
-      - name: Test Oracle SSH
+      - name: Test Oracle VM SSH
         env:
           VM_HOST: ${{ secrets.ORACLE_VM_HOST }}
           VM_USER: ${{ secrets.ORACLE_VM_USER }}
         run: |
-          set -e
+          set -euo pipefail
 
           ssh -i ~/.ssh/oracle_key \
             -o BatchMode=yes \
             -o StrictHostKeyChecking=yes \
-            -o ConnectTimeout=15 \
+            -o ConnectTimeout=20 \
             "$VM_USER@$VM_HOST" \
             "whoami && hostname && sudo docker --version"
 
-      # 7. Deploy to Oracle Cloud
+      # 7. Deploy application
       - name: Deploy Oxyaura Backend
         env:
           VM_HOST: ${{ secrets.ORACLE_VM_HOST }}
@@ -132,7 +90,7 @@ jobs:
           DOCKER_USER: ${{ secrets.DOCKERHUB_USERNAME }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
-          set -e
+          set -euo pipefail
 
           IMAGE="$DOCKER_USER/oxyaura-backend:$IMAGE_TAG"
 
@@ -141,24 +99,26 @@ jobs:
             -o StrictHostKeyChecking=yes \
             "$VM_USER@$VM_HOST" \
             "sudo docker pull '$IMAGE' &&
-             (sudo docker stop oxyaura-api || true) &&
-             (sudo docker rm oxyaura-api || true) &&
-             sudo docker run -d \
-               --name oxyaura-api \
-               --restart unless-stopped \
-               --env-file /opt/oxyaura/.env \
-               -p 127.0.0.1:8000:8000 \
-               '$IMAGE'"
+             sudo docker rm -f oxyaura-api 2>/dev/null || true"
 
-      # 8. Verify deployment
-      - name: Verify deployment
+          ssh -i ~/.ssh/oracle_key \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            "$VM_USER@$VM_HOST" \
+            "sudo docker run -d \
+              --name oxyaura-api \
+              --restart unless-stopped \
+              --env-file /opt/oxyaura/.env \
+              -p 127.0.0.1:8000:8000 \
+              '$IMAGE'"
+
+      # 8. Verify container deployment
+      - name: Verify Docker container
         env:
           VM_HOST: ${{ secrets.ORACLE_VM_HOST }}
           VM_USER: ${{ secrets.ORACLE_VM_USER }}
         run: |
-          set -e
-
-          echo "Checking Oxyaura container..."
+          set -euo pipefail
 
           ssh -i ~/.ssh/oracle_key \
             -o BatchMode=yes \
@@ -166,50 +126,41 @@ jobs:
             "$VM_USER@$VM_HOST" \
             "sudo docker ps --filter name=oxyaura-api --filter status=running"
 
-          echo "Checking FastAPI health..."
+      # 9. Verify FastAPI
+      - name: Verify FastAPI application
+        env:
+          VM_HOST: ${{ secrets.ORACLE_VM_HOST }}
+          VM_USER: ${{ secrets.ORACLE_VM_USER }}
+        run: |
+          set -euo pipefail
 
+          for i in {1..12}; do
+            if ssh -i ~/.ssh/oracle_key \
+              -o BatchMode=yes \
+              -o StrictHostKeyChecking=yes \
+              "$VM_USER@$VM_HOST" \
+              "curl -fsS http://127.0.0.1:8000/docs > /dev/null"; then
+
+              echo "Oxyaura FastAPI is running successfully!"
+              exit 0
+            fi
+
+            echo "Waiting for FastAPI startup..."
+            sleep 5
+          done
+
+          echo "FastAPI health check failed"
           ssh -i ~/.ssh/oracle_key \
             "$VM_USER@$VM_HOST" \
-            "curl -fsS http://127.0.0.1:8000/docs > /dev/null"
+            "sudo docker logs --tail 100 oxyaura-api"
 
-          echo "Oxyaura deployment completed successfully!"
+          exit 1
 
-      # 6. Deploy to Oracle Cloud VM
-      - name: Deploy to Oracle VM
-        env:
-          VM_HOST: ${{ secrets.ORACLE_VM_HOST }}
-          VM_USER: ${{ secrets.ORACLE_VM_USER }}
-          DOCKER_USER: ${{ secrets.DOCKERHUB_USERNAME }}
-          IMAGE_TAG: ${{ github.sha }}
+      # 10. Deployment completed
+      - name: Deployment success
         run: |
-          set -e
-
-          IMAGE="$DOCKER_USER/oxyaura-backend:$IMAGE_TAG"
-
-          ssh -i ~/.ssh/deploy_key \
-            -o StrictHostKeyChecking=yes \
-            "$VM_USER@$VM_HOST" \
-            "sudo docker pull $IMAGE &&
-             (sudo docker stop oxyaura-api || true) &&
-             (sudo docker rm oxyaura-api || true) &&
-             sudo docker run -d \
-               --name oxyaura-api \
-               --restart unless-stopped \
-               --env-file /opt/oxyaura/.env \
-               -p 8000:8000 \
-               $IMAGE"
-
-      # 7. Verify deployment
-      - name: Verify deployment
-        env:
-          VM_HOST: ${{ secrets.ORACLE_VM_HOST }}
-          VM_USER: ${{ secrets.ORACLE_VM_USER }}
-        run: |
-          set -e
-
-          ssh -i ~/.ssh/deploy_key \
-            -o StrictHostKeyChecking=yes \
-            "$VM_USER@$VM_HOST" \
-            "sudo docker ps --filter name=oxyaura-api --filter status=running"
-
-          echo "Deployment completed successfully"
+          echo "=================================="
+          echo "Oxyaura AI Deployment Successful"
+          echo "Oracle Cloud VM: 163.192.204.91"
+          echo "Docker container: oxyaura-api"
+          echo "=================================="
